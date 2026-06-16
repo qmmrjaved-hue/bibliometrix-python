@@ -231,7 +231,11 @@ def AU_UN(M, sep):
         return ";".join(index)
 
     M["AU_UN"] = listAFF.apply(extract_affiliations)
-    if M["DB"].iloc[0] in ["ISI", "OPENALEX"] and "C3" in M.columns:
+    # PATCHED: added all ETL pipeline DB values so every supported source
+    # benefits from the C3 institution-name override (DIMENSIONS, LENS,
+    # COCHRANE, SCOPUS added alongside existing PUBMED, OPENALEX, WOS).
+    if M["DB"].iloc[0] in ["ISI", "OPENALEX", "PUBMED", "WOS",
+                            "SCOPUS", "DIMENSIONS", "LENS", "COCHRANE"] and "C3" in M.columns:
         M["AU_UN"].loc[M["C3"].notna() & (M["C3"] != "")] = M["C3"]
         M["AU_UN"] = M["AU_UN"].str.split(sep).apply(lambda l: sep.join([x.strip() for x in l]))
 

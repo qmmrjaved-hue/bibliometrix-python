@@ -332,5 +332,156 @@ For detailed development status and known issues, please check the [issue tracke
 ---
 
 <p align="center">
-Made with ❤️ by PRAISELab Team at University of Naples Federico II
+Made with love by PRAISELab Team at University of Naples Federico II
 </p>
+
+---
+
+## ETL Pipeline Extension (AY 2025/2026)
+
+This fork extends `bibliometrix-python` with a fully source-agnostic ETL pipeline that
+replicates `convert2df()` from the R Bibliometrix package. All output conforms to the
+**WoS Field Tag schema**, making it compatible with every analytical function in
+`www/services/` and `www/functions/`.
+
+**Submitted by: Qamar Javed**
+*Data Science exam, Prof. Vincenzo Moscato, Federico II / UNINA, AY 2025/2026*
+
+---
+
+### Supported Sources
+
+| Source | Format | Retrieval |
+|---|---|---|
+| PubMed | MEDLINE / E-utilities API | Automated (API) |
+| OpenAlex | REST API (JSON) | Automated (API) |
+| Scopus | CSV export | File upload |
+| Scopus | BibTeX export | File upload |
+| Web of Science | TXT / CIW plaintext | File upload |
+| Web of Science | BibTeX export | File upload |
+| Dimensions | CSV / XLSX export | File upload |
+| Lens.org | CSV export | File upload |
+| Cochrane CDSR | TXT plaintext | File upload |
+| PubMed | MEDLINE TXT file export | File upload |
+
+---
+
+### Architecture
+
+Each pipeline phase is a dedicated module — monolithic functions are strictly prohibited.
+
+| Module | Phase | Responsibility |
+|---|---|---|
+| `www/services/mapping_dicts.py` | Config | 10 source mapping dicts; `MANDATORY_COLUMNS`, `LIST_FIELDS`, `SCALAR_FIELDS` |
+| `www/services/api_retriever.py` | Extract (API) | `fetch_pubmed()`, `fetch_openalex()` — pagination, exponential-backoff retry |
+| `www/services/standardizer.py` | Extract (file) + Transform | `load_file()`, `detect_source()`, `rename_columns()`, `enforce_types()`, `handle_nulls()`, `add_calculated_fields()`, `run_pipeline()` |
+| `www/services/validator.py` | Validate | `validate(df)` — raises `ValidationError` naming the failing column; returns structured report |
+| `dashboard/app.py` | Present | Streamlit dashboard (five tabs: API Query, File Upload, Validation, Analysis, About) |
+| `tests/test_etl.py` | Test | pytest suite covering all pipeline phases and all 10 source types |
+
+---
+
+### Mapping Strategy
+
+Column names are **never hardcoded** anywhere in the pipeline code.
+`mapping_dicts.py` contains one dictionary per source that maps source-native field
+names to WoS Field Tags. The dispatcher in `standardizer.py` selects the correct
+dictionary automatically.
+
+Selected mappings:
+
+| Source | Example mapping |
+|---|---|
+| PubMed API | `FAU` → `AF`, `MH` → `ID`, `DP` → `PY`, `TA` → `JI` |
+| OpenAlex API | `display_name` → `TI`, `cited_by_count` → `TC`, `author_names` → `AU` |
+| Scopus CSV | `EID` → `UT`, `Cited by` → `TC`, `Author Keywords` → `DE` |
+| Scopus BibTeX | `author` → `AU`, `note` → `TC` (Cited by: N), `url` → `UT` (EID) |
+| WoS BibTeX | `ID` → `UT`, `keywords-plus` → `ID`, `times-cited` → `TC` |
+| Dimensions | `Publication ID` → `UT`, `PubYear` → `PY`, `MeSH terms` → `ID` |
+| Lens.org | `Lens ID` → `UT`, `Author/s` → `AU`, `Citing Works Count` → `TC` |
+| Cochrane | `ID` → `UT`, `YR` → `PY`, `KY` → `DE`, `DOI` → `DI` |
+| PubMed file | `IP` → `IS`, `IS` → `SN`, `LID` → `DI`, `PMID` → `PMID` |
+
+All 10 sources pass through the **same** downstream `enforce_types` / `handle_nulls` /
+`add_calculated_fields` pipeline — zero duplicated transform logic.
+
+---
+
+### Type Contracts
+
+| Field | Type | Rule |
+|---|---|---|
+| `AU`, `AF`, `C1`, `CR`, `DE`, `ID` | `list[str]` | Split on `;`; `[]` if missing |
+| All other scalar fields | `str` | `""` if missing |
+| `PY` | `str` | 4-digit year extracted from full date string |
+| `TC` | `int` | `0` if missing or unparseable |
+| `DB` | `str` | Set from `SOURCE_TO_DB` map (e.g. `SCOPUS_CSV` → `"SCOPUS"`) |
+| `SR` | `str` | Computed by existing `SR(M)` in `metatagextraction.py` |
+
+Mandatory output columns (24):
+`DB`, `UT`, `DI`, `PMID`, `TI`, `SO`, `JI`, `PY`, `DT`, `LA`, `TC`, `AU`, `AF`,
+`C1`, `RP`, `CR`, `DE`, `ID`, `AB`, `VL`, `IS`, `BP`, `EP`, `SR`
+
+---
+
+### SR Field
+
+The Short Reference field is computed by calling the existing `SR(M)` function
+from `www/services/metatagextraction.py`. It is **never reimplemented** — the
+ETL pipeline calls it directly from `add_calculated_fields()`, with a faithful
+fallback for environments where Shiny-specific deps are absent.
+
+---
+
+### Patches Applied to Existing Code
+
+Six patches were applied in place to accept all new DB values. Every patch is
+marked with a `# PATCHED:` comment giving the reason.
+
+| File | Change |
+|---|---|
+| `www/services/histnetwork.py` | Added `"WOS"` to the `Web_of_Science` branch; added `"SCOPUS"` to the Scopus branch; added `"DIMENSIONS"`, `"LENS"`, `"COCHRANE"` routed through WoS citation analysis |
+| `www/services/biblionetwork.py` | Fixed `db_name == "SCOPUS"` case-sensitivity bug (was never matching); added `"wos"` to WoS branch in `label_short()`; added `"dimensions"`, `"lens"`, `"cochrane"` alongside `"pubmed"` / `"openalex"` |
+| `www/services/metatagextraction.py` | Added `"SCOPUS"`, `"DIMENSIONS"`, `"LENS"`, `"COCHRANE"` to the `AU_UN` C3 institution-name override check |
+
+---
+
+### Running the ETL Dashboard
+
+```bash
+streamlit run dashboard/app.py
+```
+
+The dashboard has five tabs:
+
+1. **API Query** — enter a query, choose PubMed or OpenAlex, set result count, click Run Pipeline
+2. **File Upload** — upload a bibliographic file (auto-detected or format selected), click Process File
+3. **Validation** — per-check pass/fail status for the most recent pipeline run
+4. **Analysis** — summary metrics, publications-per-year chart, top authors, top keywords
+5. **About** — architecture description, supported sources, mandatory columns, patch table
+
+---
+
+### Running Tests
+
+```bash
+# Unit tests only (no network, no file I/O)
+pytest tests/test_etl.py -m "not integration and not file_sources"
+
+# File-source tests (requires sources/ directory)
+pytest tests/test_etl.py -m "file_sources"
+
+# Full suite including live API calls
+pytest tests/test_etl.py
+
+# Verbose output
+pytest tests/test_etl.py -v
+```
+
+---
+
+### Data Output
+
+Standardized CSVs are written to `data/outputs/`. Multi-value fields use `;`
+as delimiter, matching the format expected by all analytical functions in
+`www/services/` and `www/functions/`.

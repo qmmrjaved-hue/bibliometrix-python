@@ -34,10 +34,15 @@ def histNetwork(df, min_citations=0, sep=";", network=True):
     # Fill missing values in TC
     M['TC'] = M['TC'].fillna(0)
 
-    if db == "Web_of_Science":
+    # PATCHED: accept all ETL pipeline DB values in addition to original Shiny names.
+    if db in ("Web_of_Science", "WOS"):
         results = wos(M, min_citations=min_citations, sep=sep, network=network)
-    elif db == "Scopus":
+    elif db in ("Scopus", "SCOPUS"):
         results = scopus(M, min_citations=min_citations, sep=sep, network=network)
+    # PATCHED: route all supported sources through the WoS-compatible citation
+    # analysis path (SR/DOI-based reference matching is source-agnostic).
+    elif db in ("PUBMED", "OPENALEX", "DIMENSIONS", "LENS", "COCHRANE"):
+        results = wos(M, min_citations=min_citations, sep=sep, network=network)
     else:
         print("\nDatabase not compatible with direct citation analysis\n")
         return None

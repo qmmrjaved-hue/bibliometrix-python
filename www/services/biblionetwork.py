@@ -75,7 +75,8 @@ def biblionetwork(M, analysis="coupling", network="authors", n=None, sep=";", sh
 
         db_name = M["DB"].iloc[0]
         print(f"db_name: {db_name}")
-        if network == "references" and db_name == "SCOPUS":
+        # PATCHED: accept both "Scopus" (Shiny) and "SCOPUS" (ETL pipeline) DB values.
+        if network == "references" and db_name.upper() == "SCOPUS":
             ind = [i for i, col in enumerate(NetMatrix.columns) if str(col)[0].isalpha()]
             NetMatrix = NetMatrix.iloc[ind, ind]
 
@@ -91,12 +92,17 @@ def label_short(NET, db="isi"):
     LABEL = pd.Series(NET.columns)
     YEAR = LABEL.str.extract(r'(\d{4})')[0].fillna("")
 
-    if db == "web_of_science":
+    if db in ("web_of_science", "wos"):
         AU = LABEL.str.split(" ").str[:2].str.join(" ")
         LABEL = AU + " " + YEAR
-    elif db == "scopus":
+    elif db in ("scopus",):
         AU = LABEL.str.split(". ").str[0]
         LABEL = AU + ". " + YEAR
+    # PATCHED: PubMed, OpenAlex, Dimensions, Lens, and Cochrane all use the
+    # same WoS-compatible SR format; reuse the WoS label-shortening logic.
+    elif db in ("pubmed", "openalex", "dimensions", "lens", "cochrane"):
+        AU = LABEL.str.split(" ").str[:2].str.join(" ")
+        LABEL = AU + " " + YEAR
     return LABEL.tolist()
 
 
